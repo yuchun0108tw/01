@@ -1,0 +1,87 @@
+/*
+'* File:          KillIdleSession_ctrlmdb_emdb.sql
+'* Main Function: Kill SQL Server connection which was an idle blocking session 
+'*                (sleeping + awaiting command > 30 mins in ctrlmdb and emdb)
+*/
+
+SET NOCOUNT ON
+
+DECLARE @IDLE_TIME DATETIME
+DECLARE @nKillProcess INT
+DECLARE @nFetchStatus INT
+DECLARE @sTemp VARCHAR(30)
+
+-- 設定閒置時間門檻為 30 分鐘 (時:分:秒)
+SET @IDLE_TIME = '00:30:00'
+
+-- 若暫存表已存在則先刪除，避免重複執行報錯
+IF OBJECT_ID('tempdb..#SESSION_TEMP_RECORD') IS NOT NULL
+    DROP TABLE #SESSION_TEMP_RECORD
+
+-- 建立暫存表存放符合條件的 Session
+CREATE TABLE #SESSION_TEMP_RECORD
+(
+    spid smallint,
+    last_batch datetime,
+    kpid smallint,
+    [status] nchar(60),
+    waittype binary(2),
+    waittime bigint,
+    lastwaittype nchar(64),
+    [dbid] smallint,
+    cmd nchar(32),
+    hostname nchar(256),
+    loginame nchar(256),
+    IDLE_TIME_TARGET DATETIME
+)
+
+-- 篩選符合條件的 Session
+INSERT INTO #SESSION_TEMP_RECORD(spid, last_batch, kpid, [status], waittype, waittime, lastwaittype, [dbid], cmd, hostname, loginame)
+SELECT
+    spid, last_batch, kpid, [status], waittype, waittime, lastwaittype, [dbid], cmd, hostname, loginame
+FROM sys.sysprocesses WITH (NOLOCK)
+WHERE [status] IN ('sleeping')
+  AND cmd IN ('AWAITING COMMAND')
+  AND kpid = 0                                   -- 目前無執行緒在運作
+  AND spid > 50                                  -- 排除系統背景 SPID
+  AND DB_NAME([dbid]) IN ('ctrlmdb', 'emdb')     -- 目標資料庫：ctrlmdb 及 emdb
+  -- 如需限定特定主機或登入帳號，請取消下方註解並填入對應名稱：
+  -- AND hostname IN ('your_host_1', 'your_host_2')
+  -- AND loginame IN ('your_login_name')
+  AND spid IN (SELECT blocked FROM master.dbo.sysprocesses WITH (NOLOCK) WHERE blocked <> 0) -- 正在 Lock (阻塞) 其他 Session
+  AND blocked = 0                                -- 本身是源頭阻塞者 (Head Blocker)
+
+-- 計算 30 分鐘前的時間基準點 (亦可使用 DATEADD(MINUTE, -30, GETDATE()))
+UPDATE #SESSION_TEMP_RECORD
+SET IDLE_TIME_TARGET = GETDATE() - @IDLE_TIME
+
+-- 宣告 Cursor 撈出 last_batch 早於 30 分鐘前的 SPID
+DECLARE curProcesses CURSOR
+    LOCAL
+    FAST_FORWARD
+    READ_ONLY
+FOR
+    SELECT spid
+    FROM #SESSION_TEMP_RECORD
+    WHERE last_batch < IDLE_TIME_TARGET
+
+OPEN curProcesses
+
+FETCH NEXT FROM curProcesses INTO @nKillProcess
+SET @nFetchStatus = @@FETCH_STATUS
+
+-- 逐一執行 KILL
+WHILE @nFetchStatus = 0
+BEGIN
+    SET @sTemp = 'KILL ' + CAST(@nKillProcess AS VARCHAR(10))
+    PRINT @sTemp
+    EXEC(@sTemp)
+
+    FETCH NEXT FROM curProcesses INTO @nKillProcess
+    SET @nFetchStatus = @@FETCH_STATUS
+END
+
+CLOSE curProcesses
+DEALLOCATE curProcesses
+
+DROP TABLE #SESSION_TEMP_RECORD

@@ -1,0 +1,102 @@
+# SQL Server 測試環境 (2019 / 2022)，部署於 k8s Worker Node (containerW1p~W3p，各 16GB)
+# 先建立密碼 Secret (不要把密碼寫進 YAML)：
+#   kubectl create namespace sqltest
+#   kubectl -n sqltest create secret generic mssql-sa --from-literal=MSSQL_SA_PASSWORD='<SA 密碼>'
+# 部署：kubectl apply -f k8s-sqlserver-test.yaml
+# 驗證：.\Test-KillIdleBlockingSession.ps1 -Server <WorkerIP>,31439 -Password '<SA 密碼>'   (2019)
+#       .\Test-KillIdleBlockingSession.ps1 -Server <WorkerIP>,31440 -Password '<SA 密碼>'   (2022)
+# 清除：kubectl delete namespace sqltest
+# 註：SQL Server 2016 無 Linux 容器映像，2016 需以 Windows 實體機/VM 驗證。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mssql2019
+  namespace: sqltest
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: { app: mssql2019 }
+  template:
+    metadata:
+      labels: { app: mssql2019 }
+    spec:
+      containers:
+        - name: mssql
+          image: mcr.microsoft.com/mssql/server:2019-latest
+          ports:
+            - containerPort: 1433
+          env:
+            - { name: ACCEPT_EULA, value: "Y" }
+            - { name: MSSQL_PID, value: "Developer" }
+            - { name: MSSQL_AGENT_ENABLED, value: "true" }
+            - name: MSSQL_SA_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: mssql-sa, key: MSSQL_SA_PASSWORD }
+          resources:
+            requests: { memory: 2Gi, cpu: "500m" }
+            limits: { memory: 4Gi }
+          volumeMounts:
+            - { name: data, mountPath: /var/opt/mssql }
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mssql2019
+  namespace: sqltest
+spec:
+  type: NodePort
+  selector: { app: mssql2019 }
+  ports:
+    - { port: 1433, targetPort: 1433, nodePort: 31439 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mssql2022
+  namespace: sqltest
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: { app: mssql2022 }
+  template:
+    metadata:
+      labels: { app: mssql2022 }
+    spec:
+      containers:
+        - name: mssql
+          image: mcr.microsoft.com/mssql/server:2022-latest
+          ports:
+            - containerPort: 1433
+          env:
+            - { name: ACCEPT_EULA, value: "Y" }
+            - { name: MSSQL_PID, value: "Developer" }
+            - { name: MSSQL_AGENT_ENABLED, value: "true" }
+            - name: MSSQL_SA_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: mssql-sa, key: MSSQL_SA_PASSWORD }
+          resources:
+            requests: { memory: 2Gi, cpu: "500m" }
+            limits: { memory: 4Gi }
+          volumeMounts:
+            - { name: data, mountPath: /var/opt/mssql }
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mssql2022
+  namespace: sqltest
+spec:
+  type: NodePort
+  selector: { app: mssql2022 }
+  ports:
+    - { port: 1433, targetPort: 1433, nodePort: 31440 }
