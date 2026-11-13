@@ -10,7 +10,7 @@
 *   2. Session 狀態為 sleeping，且目前沒有任何執行中的 request (AWAITING COMMAND)
 *   3. 最後一次請求結束時間 last_request_end_time 早於 @IdleMinutes 分鐘前
 *   4. 目前正在阻塞其他 Session (有其他 request 的 blocking_session_id = 此 session)
-*   5. (可選) 所在資料庫在 @DatabaseList 內；NULL 代表所有資料庫
+*   5. 所在資料庫在 @DatabaseList 內 (預設 ctrlmdb、emdb；NULL 代表所有資料庫)
 *
 * 使用方式：整份腳本直接執行即可 (可重複執行，會覆蓋舊的 Procedure 與 Job)。
 */
@@ -51,7 +51,7 @@ GO
 
 CREATE PROCEDURE dbo.usp_KillIdleBlockingSession
     @IdleMinutes   INT            = 30,    -- 閒置門檻 (分鐘)
-    @DatabaseList  NVARCHAR(MAX)  = NULL,  -- 限定資料庫，逗號分隔，例如 N'ctrlmdb,emdb'；NULL = 全部資料庫
+    @DatabaseList  NVARCHAR(MAX)  = N'ctrlmdb,emdb',  -- 限定資料庫，逗號分隔；NULL = 全部資料庫
     @WhatIf        BIT            = 0,     -- 1 = 只列出/記錄，不實際 KILL
     @LogRetainDays INT            = 90     -- 紀錄保留天數
 AS
@@ -178,8 +178,8 @@ EXEC msdb.dbo.sp_add_jobstep
      @step_name     = N'Kill idle blocking sessions',
      @subsystem     = N'TSQL',
      @database_name = N'master',
-     -- 限定資料庫範例：@DatabaseList = N''ctrlmdb,emdb''
-     @command       = N'EXEC dbo.usp_KillIdleBlockingSession @IdleMinutes = 30, @DatabaseList = NULL, @WhatIf = 0;',
+     -- 限定資料庫：ctrlmdb、emdb (改為 NULL 則處理所有資料庫)
+     @command       = N'EXEC dbo.usp_KillIdleBlockingSession @IdleMinutes = 30, @DatabaseList = N''ctrlmdb,emdb'', @WhatIf = 0;',
      @on_success_action = 1,
      @on_fail_action    = 2;
 

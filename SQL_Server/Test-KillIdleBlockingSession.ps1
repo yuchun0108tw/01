@@ -81,12 +81,15 @@ function KillRun($procArgs) { Start-Sleep -Milliseconds 500; [void](Run $m "EXEC
 KillRun '@IdleMinutes = 30'
 Check '閒置未滿 30 分鐘 -> 不 KILL' (Alive $A)
 
-KillRun '@IdleMinutes = 0, @WhatIf = 1'
+KillRun "@IdleMinutes = 0, @DatabaseList = N'testdb', @WhatIf = 1"
 Check 'WhatIf 模式 -> 不 KILL' (Alive $A)
 Check 'WhatIf 模式 -> 有寫入 WHATIF 紀錄' ((Run $m "SELECT COUNT(*) FROM master.dbo.IdleSessionKillLog WHERE Action='WHATIF' AND SessionId=$spidA").Rows[0][0] -eq 1)
 
 KillRun "@IdleMinutes = 0, @DatabaseList = N'otherdb'"
 Check '資料庫不在 @DatabaseList -> 不 KILL' (Alive $A)
+
+KillRun '@IdleMinutes = 0'
+Check '預設 @DatabaseList (ctrlmdb,emdb) 不含 testdb -> 不 KILL' (Alive $A)
 
 KillRun "@IdleMinutes = 0, @DatabaseList = N'ctrlmdb, testdb'"
 Check '符合條件 -> 阻塞源 A 被 KILL' (-not (Alive $A))
